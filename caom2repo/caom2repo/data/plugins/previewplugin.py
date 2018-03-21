@@ -72,79 +72,129 @@ from caom2 import Observation, ProductType, ReleaseType, Artifact
 from cadcdata import CadcDataClient
 from cadcutils import net
 from builtins import str
-
+from six.moves.urllib.parse import urlparse
+import logging
 
 class ObservationUpdater(object):
-    """Plugin that does not update the observation"""
 
     def __init__(self):
-        self.collection = None
+        self.archive = None
 
     def update(self, observation, **kwargs):
         """
         Processes an observation and updates it
         """
-        assert isinstance(observation, Observation), (
-            "observation %s is not an Observation".format(observation))
-
-        # TODO Remove this. Archive should be dedeced from the uris of
-        # other artifacts in the plane
-        if 'collection' not in kwargs:
-            raise ValueError('caom2-repo version too old. Please upgrade')
-
-        self.collection = kwargs['collection']
-
-        if self.collection not in ['CGPS']:
-            raise ValueError('{} collection not supported'.format(
-                self.collection))
-
         # create cadc data web service client
         if 'subject' in kwargs:
-            client = CadcDataClient(kwargs['subject'])
+            data_client = CadcDataClient(kwargs['subject'])
         else:
-            client = CadcDataClient(net.Subject())
+            data_client = CadcDataClient(net.Subject())
 
-        for plane in observation.planes.values():
-            self.update_cgps_preview(observation.observation_id, plane, client)
+        pu = PreviewUpdater(observation, data_client)
+        return pu.update()
 
 
+class PreviewUpdater(object):
 
-    def update_cgps_preview(self, observation_id, plane, client):
+    def __init__(self, observation, data_client):
+        assert isinstance(observation, Observation), (
+            "observation %s is not an Observation".format(observation))
+        self.observation = observation
+        self.data_client = data_client
+        self.archive = self._get_archive()
+        assert self.archive, 'Could not determine the associated archive'
 
-        # check to see if preview exists
-        preview_file = '{}_preview_1024.png'.format(observation_id.upper())
-        thumb_file = '{}_preview_256.png'.format(observation_id.upper())
-        try:
-            preview_meta = client.get_file_info(self.collection,
-                                                preview_file)
-        except:
-            print('File {}/{} not in ad'.format(self.collection,
-                                                preview_file))
-        try:
-            thumb_meta = client.get_file_info(self.collection,
-                                                thumb_file)
-        except:
-            print('File {}/{} not in ad'.format(self.collection,
-                                                thumb_file))
+    def update(self):
+        for plane in self.observation.planes.values():
+            self.update_plane(plane)
 
-        if not thumb_meta and not preview_meta:
-            print('Nothing to do. Returning')
+    def _get_archive(self):
+        # returns the associated archive according to the archive used in
+        # artifacts
+        archive1 = None
+        for p in self.observation.planes.values():
+            for a in p.artifacts.values():
+                archive2 = urlparse(a.uri).path.split('/')[0]
+                if archive1 and (archive1 != archive2):
+                    raise RuntimeError(('Observation refers to artifact '
+                                        'in multiple archives: {}, {}').format(
+                        archive1, archive2))
+                else:
+                    archive1 = archive2
+        return archive1
+
+    def update_plane(self, plane):
+        root_name = self._get_root_name(plane)
+        if not root_name:
             return
 
-        for artifact in plane.artifacts.values():
-            if (artifact.product_type == ProductType.PREVIEW) or \
-               (artifact.product_type == ProductType.THUMBNAIL):
-                del plane.artifacts[artifact.uri]
+        preview_file = '{}_preview_1024.png'.format(root_name)
+        thumb_file = '{}_preview_256.png'.format(root_name)
 
-        preview_artifact = Artifact('ad:{}/{}'.format(self.collection,
+        # check to see if preview exists
+        thumb_meta = None
+        preview_meta = None
+        try:
+            preview_meta = self.data_client.get_file_info(self.archive,
+                                                          preview_file)
+        except Exception as e:
+            logging.error('Preview file {}/{} not in ad'.format(
+                self.archive, preview_file))
+            logging.debug(e)
+        try:
+            thumb_meta = self.data_client.get_file_info(self.archive,
+                                                        thumb_file)
+        except Exception as e:
+            logging.error('Thumbnail file {}/{} not in ad'.format(
+                self.archive, thumb_file))
+            logging.debug(e)
+
+        if not thumb_meta and not preview_meta:
+            logging.warning('Nothing to update')
+            return False
+
+        preview_artifact = Artifact('ad:{}/{}'.format(self.archive,
                                                       preview_file),
                                     ProductType.PREVIEW,
                                     ReleaseType.DATA)
-        thumbnail_artifact = Artifact('ad:{}/{}'.format(self.collection,
+        preview_artifact.content_length = int(preview_meta['size'])
+        preview_artifact.content_type = str(preview_meta['type'])
+        thumbnail_artifact = Artifact('ad:{}/{}'.format(self.archive,
                                                         thumb_file),
                                       ProductType.THUMBNAIL,
                                       ReleaseType.META)
+        thumbnail_artifact.content_length = int(thumb_meta['size'])
+        thumbnail_artifact.content_type = str(thumb_meta['type'])
 
         plane.artifacts[preview_artifact.uri] = preview_artifact
         plane.artifacts[thumbnail_artifact.uri] = thumbnail_artifact
+
+    def _get_root_name(self, plane):
+        # By default the root name == observation id
+        root = self.observation.observation_id
+        if self.archive == 'CGPS':
+            # product IDs of planes with individual previews as opposed to
+            # planes that share previews with others
+            individual_prev = ['1420MHz', '408MHz', 'CO-line', 'HI-line']
+            if plane.product_id in individual_prev:
+                root = plane.product_id.replace('MHz', '').replace('-line', '')
+                root = self.observation.observation_id.replace(
+                    '_', '_{}_'.format(root))
+                root = root.replace('-', '_')
+            elif 'QU' in plane.product_id:
+                root = None
+        elif self.archive == 'VGPS':
+            preview_type = None
+            if plane.product_id == '21cm-LineWithCont':
+                preview_type = '_hi_continuum_vla'
+            elif plane.product_id == '21cm-Line':
+                preview_type = '_hi_vla'
+            elif plane.product_id == '21cm-Cont':
+                preview_type = '_continuum_vla'
+            else:
+                raise ValueError('Unknown plane product type: {}'.format(
+                    plane.product_type))
+            root = self.observation.observation_id.replace(
+                '_VLA', preview_type)
+        return root
 
