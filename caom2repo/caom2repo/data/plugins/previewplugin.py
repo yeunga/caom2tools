@@ -75,6 +75,7 @@ from builtins import str
 from six.moves.urllib.parse import urlparse
 import logging
 
+
 class ObservationUpdater(object):
 
     def __init__(self):
@@ -197,4 +198,3 @@ class PreviewUpdater(object):
             root = self.observation.observation_id.replace(
                 '_VLA', preview_type)
         return root
-
