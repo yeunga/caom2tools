@@ -280,7 +280,8 @@ class CAOM2RepoClient(object):
         try:
             observation = self.get_observation(collection, observationID)
             if self.plugin.update(observation=observation,
-                                  subject=self._subject) is False:
+                                  subject=self._subject,
+                                  collection=collection) is False:
                 self.logger.info('SKIP {}'.format(observation.observation_id))
                 skipped = observation.observation_id
             else:
