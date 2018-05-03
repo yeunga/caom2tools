@@ -72,23 +72,16 @@ from __future__ import (absolute_import, division, print_function,
 import argparse
 import imp
 import logging
-import os
+import os, errno
 import os.path
-import signal
 import sys
-from datetime import datetime
 
 from cadcutils import net
 from cadcutils import util
-from caom2.obs_reader_writer import ObservationReader, ObservationWriter
 from caom2repo import CAOM2RepoClient
-from six import BytesIO
-from six.moves import xrange
 
 # from . import version as caom2repo_version
 from caom2repo import version
-
-__all__ = ['CAOM2FixPreviewClient']
 
 CFHT_DELIMITER = '_preview'
 
@@ -122,6 +115,18 @@ class CAOM2FixPreviewClient(object):
         self._subject = subject
         self.agent = "fixPreview"
 
+    def write_report(self, name, data):
+        try:
+            os.remove(name)
+            with open(name, 'a') as the_file:
+                for key, values in data.items():
+                    for v in values:
+                        the_file.write(key + ' ' + v)
+        except OSError as e:
+            if e.errno != errno.ENOENT:
+                self.logger.error(
+                    'Failed to remove file {} - Reason: {}'.format(name, e))
+
     def visit(self, plugin, obs_file):
         """
         Main processing function that iterates through the observations of
@@ -142,51 +147,50 @@ class CAOM2FixPreviewClient(object):
 
         self._load_plugin_class(plugin)
 
-        no_observation = []
-        failed = []
-        updated = []
-        skipped = []
-        observations = []
-        junks = []
-        to_delete = []
+        no_observation = {}
+        failed = {}
+        updated = {}
+        skipped = {}
+        observations = {}
+        to_delete = {}
         if obs_file is not None:
             # get observation IDs from file, no batching
-            observations, junks = self._get_obs_from_file(obs_file, CFHT_DELIMITER)
+            observations = self._get_obs_from_file(obs_file, CFHT_DELIMITER)
 
         results = [
-            self._process_observation_id(collection, observationID)
-            for observationID in observations]
+            self._process_observation_id(collection, k, v)
+            for k, v in observations.items()]
         for n, u, s, f, d in results:
             if n:
-                no_observation.append(n)
+                no_observation.update(n)
             if u:
-                updated.append(u)
+                updated.update(u)
             if s:
-                skipped.append(s)
+                skipped.update(s)
             if f:
-                failed.append(f)
+                failed.update(f)
             if d:
-                for deletes in d:
-                    to_delete.append(deletes)
+                to_delete.update(d)
 
-        return no_observation, updated, skipped, failed, to_delete, junks
+        return no_observation, updated, skipped, failed, to_delete
 
-    def _update_observation(self, client, collection, observation, observationID):
-        updated = None
-        skipped = None
-        failed = None
+    def _update_observation(self, client, collection, observation, observationID, filenames):
+        to_delete = {}
+        updated = {}
+        skipped = {}
+        failed = {}
         try:
             update, to_delete = self.plugin.update(observation=observation,
                                                    subject=self._subject,
                                                    collection=collection)
             if update is False:
                 self.logger.info('SKIP {}'.format(observation.observation_id))
-                skipped = observation.observation_id
+                skipped[observation.observation_id] = filenames
             else:
                 client.post_observation(observation)
                 self.logger.debug(
                     'UPDATED {}'.format(observation.observation_id))
-                updated = observation.observation_id
+                updated[observation.observation_id] = filenames
         except TypeError as e:
             if "unexpected keyword argument" in str(e):
                 raise RuntimeError(
@@ -197,25 +201,25 @@ class CAOM2FixPreviewClient(object):
                 # other unexpected TypeError
                 raise e
         except Exception as e:
-            failed = observationID
+            failed[observationID] = filenames
             self.logger.error(
                 'FAILED {} - Reason: {}'.format(observationID, e))
         return updated, skipped, failed, to_delete
 
-    def _process_observation_id(self, collection, observationID):
+    def _process_observation_id(self, collection, observationID, filenames):
         observation = None
-        no_observation = None
-        updated = None
-        skipped = None
-        failed = None
-        to_delete = []
+        no_observation = {}
+        updated = {}
+        skipped = {}
+        failed = {}
+        to_delete = {}
         self.logger.info('Process observation: ' + observationID)
         client = CAOM2RepoClient(self._subject, self.level, self.resource_id,
                                  self.host)
         try:
             observation = client.get_observation(collection, observationID)
             updated, skipped, failed, to_delete = self._update_observation(
-                client, collection, observation, observationID)
+                client, collection, observation, observationID, filenames)
         except Exception as e:
             if 'not found' in e._msg:
                 if collection == 'CFHT':
@@ -223,18 +227,18 @@ class CAOM2FixPreviewClient(object):
                         # retry on CFHTTERAPIX collection
                         observation = client.get_observation('CFHTTERAPIX', observationID)
                         updated, skipped, failed, to_delete = self._update_observation(
-                            client, 'CFHTTERAPIX', observation, observationID)
+                            client, 'CFHTTERAPIX', observation, observationID, filenames)
                     except Exception as e:
                         if 'not found' in e._msg:
-                            no_observation = observationID
+                            no_observation[observationID] = filenames
                         else:
-                            failed = observationID
+                            failed[observationID] = filenames
                             self.logger.error(
                                 'FAILED {} - Reason: {}'.format(observationID, e))
                 else:
-                    no_observation = observationID
+                    no_observation[observationID] = filenames
             else:
-                failed = observationID
+                failed[observationID] = filenames
                 self.logger.error(
                     'FAILED {} - Reason: {}'.format(observationID, e))
 
@@ -242,20 +246,30 @@ class CAOM2FixPreviewClient(object):
 
     def _get_obs_from_file(self, obs_file, delimiter):
         junks = []
-        obs = []
+        obs = {}
         for l in obs_file:
+            filenames = []
             try:
                 obs_id, theRest = l.split(delimiter, 1)
                 if obs_id is None or len(obs_id) == 0:
                     junks.append(l)
                     self.logger.debug('not a preview: {}'.format(l))
                 else:
-                    obs.append(obs_id)
+                    if obs_id in obs:
+                        names = obs.get(obs_id)
+                        names.append(l)
+                        obs[obs_id] = names
+                    else:
+                        filenames.append(l)
+                        obs[obs_id] = filenames
             except:
                 junks.append(l)
                 self.logger.debug('not a preview: {}'.format(l))
 
-        return obs, junks
+        with open('files_with_no_recognizable_observationID.txt', 'a') as the_file:
+            for line in junks:
+                the_file.write(line)
+        return obs
 
     def _load_plugin_class(self, filepath):
         """
@@ -282,11 +296,6 @@ class CAOM2FixPreviewClient(object):
             raise Exception(
                 'Cannot find update method in plugin class ' + filepath)
 
-
-def write_report(name, data):
-    with open(name, 'a') as the_file:
-        for line in data:
-            the_file.write(line)
 
 def main_app():
     parser = util.get_base_parser(version=version.version,
@@ -341,22 +350,17 @@ def main_app():
     client = CAOM2FixPreviewClient(subject, level, args.resource_id, host=server)
     if args.cmd == 'visit':
         try:
-            (no_observation, updated, skipped, failed, to_delete, junks) = \
+            (no_observation, updated, skipped, failed, to_delete) = \
                 client.visit(args.plugin.name, obs_file=args.obs_file)
         finally:
             if args.obs_file is not None:
                 args.obs_file.close()
-        logger.info(
-            'Visitor stats: visited/updated/skipped/errors: {}/{}/{}/{}'.
-            format(len(no_observation), len(updated), len(skipped),
-                   len(failed), len(junks)))
 
-        write_report('files_with_no_associated_observation.txt', no_observation)
-        write_report('files_with_observation_updated.txt', updated)
-        write_report('files_with_failed_observation_update.txt', failed)
-        write_report('files_with_no_recognizable_observationID.txt', junks)
-        write_report('files_with_observation_update_skipped.txt', skipped)
-        write_report('files_to_be_deleted_for_observation.txt', to_delete)
+        client.write_report('files_with_no_associated_observation.txt', no_observation)
+        client.write_report('files_with_observation_updated.txt', updated)
+        client.write_report('files_with_failed_observation_update.txt', failed)
+        client.write_report('files_with_observation_update_skipped.txt', skipped)
+        client.write_report('files_to_be_deleted_for_observation.txt', to_delete)
     else:
         logger.info("command {} not supported".format(args.cmd))
 

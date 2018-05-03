@@ -107,13 +107,10 @@ class PreviewUpdater(object):
 
     def update(self):
         update = False
-        to_delete = []
+        to_delete = {}
         for plane in self.observation.planes.values():
-            updated, deleted = self.update_plane(plane)
+            updated, to_delete = self.update_plane(plane)
             update = update or updated
-            if deleted:
-                for d in deleted:
-                    to_delete.append(d)
 
         return update, to_delete
 
@@ -132,13 +129,13 @@ class PreviewUpdater(object):
                     archive1 = archive2
         return archive1
 
-    def _get_meta(self, file, type, ext):
+    def _get_meta(self, file):
         meta = None
         try:
             meta = self.data_client.get_file_info(self.archive, file)
         except Exception as e:
-            logging.error('{} {} file {}/{} not in ad'.format(
-                ext, type, self.archive, file))
+            logging.error('file {}/{} not in ad'.format(
+                self.archive, file))
             logging.debug(e)
         return meta
 
@@ -152,18 +149,19 @@ class PreviewUpdater(object):
 
     def update_cfht_plane(self, plane, root_name):
         update = True
-        to_delete = []
+        meta = []
+        to_delete = {}
         png_preview_file = '{}_preview_1024.png'.format(root_name)
         png_thumb_file = '{}_preview_256.png'.format(root_name)
         jpg_preview_file = '{}_preview_1024.jpg'.format(root_name)
         jpg_thumb_file = '{}_preview_256.jpg'.format(root_name)
         jpg_zoom_file = '{}_preview_zoom_1024.jpg'.format(root_name)
 
-        png_preview_meta = self._get_meta(png_preview_file, 'preview', 'png')
-        png_thumb_meta = self._get_meta(png_thumb_file, 'thumbnail', 'png')
-        jpg_preview_meta = self._get_meta(jpg_preview_file, 'preview', 'jpeg')
-        jpg_thumb_meta = self._get_meta(jpg_thumb_file, 'thumbnail', 'jpeg')
-        jpg_zoom_meta = self._get_meta(jpg_zoom_file, 'zoom', 'jpeg')
+        png_preview_meta = self._get_meta(png_preview_file)
+        png_thumb_meta = self._get_meta(png_thumb_file)
+        jpg_preview_meta = self._get_meta(jpg_preview_file)
+        jpg_thumb_meta = self._get_meta(jpg_thumb_file)
+        jpg_zoom_meta = self._get_meta(jpg_zoom_file)
 
         if png_preview_meta is not None or png_thumb_meta is not None:
             # at least one png preview file exists
@@ -175,11 +173,13 @@ class PreviewUpdater(object):
                                       ProductType.THUMBNAIL, ReleaseType.META)
             # mark all jpeg preview files to be deleted
             if jpg_preview_meta is not None:
-                to_delete.append(jpg_preview_meta['name'])
+                meta.append(jpg_preview_meta['name'])
             if jpg_thumb_meta is not None:
-                to_delete.append(jpg_thumb_meta['name'])
+                meta.append(jpg_thumb_meta['name'])
             if jpg_zoom_meta is not None:
-                to_delete.append(jpg_zoom_meta['name'])
+                meta.append(jpg_zoom_meta['name'])
+            if len(meta) > 0:
+                to_delete[root_name] = meta
         elif jpg_preview_meta is not None or jpg_thumb_meta is not None or jpg_zoom_meta is not None:
             # no png preview file but at least one jpeg preview file exists
             if jpg_preview_meta is not None:
@@ -192,14 +192,14 @@ class PreviewUpdater(object):
                 self._update_artifact(plane, jpg_zoom_file, jpg_zoom_meta,
                                       ProductType.PREVIEW, ReleaseType.DATA)
         else:
-            update = False
+            return False
 
         return update, to_delete
 
 
     def update_plane(self, plane):
         update = True
-        to_delete = []
+        to_delete = {}
         root_name = self._get_root_name(plane)
         if not root_name:
             return update, to_delete
@@ -230,7 +230,7 @@ class PreviewUpdater(object):
 
         if not thumb_meta and not preview_meta:
             logging.warning('Nothing to update')
-            update = False
+            return False
         else:
             if preview_meta is not None:
                 preview_artifact = Artifact('ad:{}/{}'.format(self.archive,
