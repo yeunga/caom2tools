@@ -266,7 +266,9 @@ class CAOM2FixPreviewClient(object):
                 junks.append(l)
                 self.logger.debug('not a preview: {}'.format(l))
 
-        with open('files_with_no_recognizable_observationID.txt', 'a') as the_file:
+        filepath = 'files_with_no_recognizable_observationID.txt'
+        os.remove(filepath)
+        with open(filepath, 'a') as the_file:
             for line in junks:
                 the_file.write(line)
         return obs
