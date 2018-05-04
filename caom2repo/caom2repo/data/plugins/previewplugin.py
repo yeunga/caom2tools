@@ -68,7 +68,7 @@
 # ***********************************************************************
 #
 
-from caom2 import Observation, ProductType, ReleaseType, Artifact
+from caom2 import ChecksumURI, Observation, ProductType, ReleaseType, Artifact
 from cadcdata import CadcDataClient
 from cadcutils import net
 from builtins import str
@@ -140,9 +140,11 @@ class PreviewUpdater(object):
         return meta
 
     def _update_artifact(self, plane, file, meta, product_type, release_type):
+        checksum = ChecksumURI('md5:{}'.format(meta['md5sum']))
         preview_artifact = Artifact('ad:{}/{}'.format(self.archive, file),
                                     product_type,
                                     release_type)
+        preview_artifact.content_checksum = checksum
         preview_artifact.content_length = int(meta['size'])
         preview_artifact.content_type = str(meta['type'])
         plane.artifacts[preview_artifact.uri] = preview_artifact
@@ -258,18 +260,22 @@ class PreviewUpdater(object):
             return False
         else:
             if preview_meta is not None:
+                checksum = ChecksumURI('md5:{}'.format(preview_meta['md5sum']))
                 preview_artifact = Artifact('ad:{}/{}'.format(self.archive,
                                                               preview_file),
                                             ProductType.PREVIEW,
                                             ReleaseType.DATA)
+                preview_artifact.content_checksum = checksum
                 preview_artifact.content_length = int(preview_meta['size'])
                 preview_artifact.content_type = str(preview_meta['type'])
                 plane.artifacts[preview_artifact.uri] = preview_artifact
             if thumb_meta is not None:
+                checksum = ChecksumURI('md5:{}'.format(thumb_meta['md5sum']))
                 thumbnail_artifact = Artifact('ad:{}/{}'.format(self.archive,
                                                                 thumb_file),
                                               ProductType.THUMBNAIL,
                                               ReleaseType.META)
+                thumbnail_artifact.content_checksum = checksum
                 thumbnail_artifact.content_length = int(thumb_meta['size'])
                 thumbnail_artifact.content_type = str(thumb_meta['type'])
                 plane.artifacts[thumbnail_artifact.uri] = thumbnail_artifact
