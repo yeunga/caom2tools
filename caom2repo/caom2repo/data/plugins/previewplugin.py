@@ -196,6 +196,28 @@ class PreviewUpdater(object):
 
         return update, to_delete
 
+    def update_most_plane(self, plane, root_name):
+        update = True
+        meta = []
+        to_delete = {}
+        jpg_preview_file = '{}_preview_1024.jpg'.format(root_name)
+        jpg_thumb_file = '{}_preview_256.jpg'.format(root_name)
+
+        jpg_preview_meta = self._get_meta(jpg_preview_file)
+        jpg_thumb_meta = self._get_meta(jpg_thumb_file)
+
+        if jpg_preview_meta is not None or jpg_thumb_meta is not None:
+            if jpg_preview_meta is not None:
+                self._update_artifact(plane, jpg_preview_file, jpg_preview_meta,
+                                      ProductType.PREVIEW, ReleaseType.DATA)
+            if jpg_thumb_meta is not None:
+                self._update_artifact(plane, jpg_thumb_file, jpg_thumb_meta,
+                                      ProductType.THUMBNAIL, ReleaseType.DATA)
+        else:
+            return False
+
+        return update, to_delete
+
 
     def update_plane(self, plane):
         update = True
@@ -206,6 +228,9 @@ class PreviewUpdater(object):
 
         if self.archive == 'CFHT':
             return self.update_cfht_plane(plane, root_name)
+
+        if self.archive == 'MOST':
+            return self.update_most_plane(plane, root_name)
 
         preview_file = '{}_preview_1024.png'.format(root_name)
         thumb_file = '{}_preview_256.png'.format(root_name)
