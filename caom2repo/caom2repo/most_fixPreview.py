@@ -84,7 +84,7 @@ from caom2repo import CAOM2RepoClient
 from caom2repo import version
 
 CFHT_DELIMITER = '_preview'
-CGPS_DELIMITER = '_preview'
+MOST_DELIMITER = '_preview'
 
 CAOM2REPO_OBS_CAPABILITY_ID =\
     'vos://cadc.nrc.ca~vospace/CADC/std/CAOM2Repository#obs-1.1'
@@ -114,7 +114,7 @@ class CAOM2FixPreviewClient(object):
         self.resource_id = resource_id
         self.host = host
         self._subject = subject
-        self.agent = "cgps_fixPreview"
+        self.agent = "most_fixPreview"
 
     def write_report(self, name, data):
         with open(name, 'w') as the_file:
@@ -150,7 +150,7 @@ class CAOM2FixPreviewClient(object):
         to_delete = {}
         if obs_file is not None:
             # get observation IDs from file, no batching
-            observations = self._get_obs_from_file(obs_file, CGPS_DELIMITER)
+            observations = self._get_obs_from_file(obs_file, MOST_DELIMITER)
 
         results = [
             self._process_observation_id(collection, k, v)
