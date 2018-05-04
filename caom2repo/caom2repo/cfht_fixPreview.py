@@ -113,22 +113,13 @@ class CAOM2FixPreviewClient(object):
         self.resource_id = resource_id
         self.host = host
         self._subject = subject
-        self.agent = "fixPreview"
+        self.agent = "cfht_fixPreview"
 
     def write_report(self, name, data):
-        write_file = True
-        try:
-            os.remove(name)
-        except OSError as e:
-            if e.errno != errno.ENOENT:
-                write_file = False
-                self.logger.error(
-                    'Failed to remove file {} - Reason: {}'.format(name, e))
-        if write_file is True:
-            with open(name, 'a') as the_file:
-                for key, values in data.items():
-                    for v in values:
-                        the_file.write(key + ' ' + v)
+        with open(name, 'w') as the_file:
+            for key, values in data.items():
+                for v in values:
+                    the_file.write(key + ' ' + v)
 
     def visit(self, plugin, obs_file):
         """
@@ -269,19 +260,9 @@ class CAOM2FixPreviewClient(object):
                 junks.append(l)
                 self.logger.debug('not a preview: {}'.format(l))
 
-        filepath = 'files_with_no_recognizable_observationID.txt'
-        write_file = True
-        try:
-            os.remove(filepath)
-        except OSError as e:
-            if e.errno != errno.ENOENT:
-                write_file = False
-                self.logger.error(
-                    'Failed to remove file {} - Reason: {}'.format(filepath, e))
-        if write_file is True:
-            with open(filepath, 'a') as the_file:
-                for line in junks:
-                    the_file.write(line)
+        with open('files_with_no_recognizable_observationID.txt', 'w') as the_file:
+            for line in junks:
+                the_file.write(line)
         return obs
 
     def _load_plugin_class(self, filepath):
