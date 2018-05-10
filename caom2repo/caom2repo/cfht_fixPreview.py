@@ -159,6 +159,8 @@ class CAOM2FixPreviewClient(object):
 
         self._load_plugin_class(plugin)
 
+        self.clear_reports()
+
         observations = {}
         if obs_file is not None:
             # get observation IDs from file, no batching
@@ -168,7 +170,6 @@ class CAOM2FixPreviewClient(object):
         start = 0
         stop = BATCH_SIZE
         remaining_size = len(keys) - start
-        self.clear_reports()
         while remaining_size > 0:
             current_keys = keys[start:stop]
             results = [
