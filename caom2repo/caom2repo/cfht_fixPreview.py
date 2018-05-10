@@ -84,6 +84,15 @@ from caom2repo import CAOM2RepoClient
 from caom2repo import version
 
 CFHT_DELIMITER = '_preview'
+BATCH_SIZE = 2
+JUNK_REPORT = 'files_with_no_recognizable_observationID.txt'
+NO_OBSERVATION_REPORT = 'files_with_no_associated_observation.txt'
+UPDATED_REPORT = 'files_with_observation_updated.txt'
+FAILED_REPORT = 'files_with_failed_observation_update.txt'
+SKIPPED_REPORT = 'files_with_observation_update_skipped.txt'
+TO_DELETE_REPORT = 'files_to_be_deleted_for_observation.txt'
+REPORTS = [JUNK_REPORT, NO_OBSERVATION_REPORT, UPDATED_REPORT,
+           FAILED_REPORT, SKIPPED_REPORT, TO_DELETE_REPORT]
 
 CAOM2REPO_OBS_CAPABILITY_ID =\
     'vos://cadc.nrc.ca~vospace/CADC/std/CAOM2Repository#obs-1.1'
@@ -115,8 +124,13 @@ class CAOM2FixPreviewClient(object):
         self._subject = subject
         self.agent = "cfht_fixPreview"
 
+    def clear_reports(self):
+        for report in REPORTS:
+            with open(report, 'w') as the_file:
+                the_file.write("")
+
     def write_report(self, name, data):
-        with open(name, 'w') as the_file:
+        with open(name, 'a') as the_file:
             for key, values in data.items():
                 for v in values:
                     the_file.write(key + ' ' + v)
@@ -128,9 +142,7 @@ class CAOM2FixPreviewClient(object):
         of the plugin function
         :param plugin: path to python file that contains the algorithm to be
                 applied to visited observations
-        :return: tuple (list of no corresponding observations, list of updated
-               observation, list of skipped observations, list of failure
-               observations)
+        :param obs_file: path to file that contains the preview files to be fixed
         """
         assert obs_file is not None
         if not os.path.isfile(plugin):
@@ -141,32 +153,38 @@ class CAOM2FixPreviewClient(object):
 
         self._load_plugin_class(plugin)
 
-        no_observation = {}
-        failed = {}
-        updated = {}
-        skipped = {}
         observations = {}
-        to_delete = {}
         if obs_file is not None:
             # get observation IDs from file, no batching
             observations = self._get_obs_from_file(obs_file, CFHT_DELIMITER)
 
-        results = [
-            self._process_observation_id(collection, k, v)
-            for k, v in observations.items()]
-        for n, u, s, f, d in results:
-            if n:
-                no_observation.update(n)
-            if u:
-                updated.update(u)
-            if s:
-                skipped.update(s)
-            if f:
-                failed.update(f)
-            if d:
-                to_delete.update(d)
-
-        return no_observation, updated, skipped, failed, to_delete
+        keys = observations.keys()
+        start = 0
+        stop = BATCH_SIZE
+        remaining_size = len(keys) - start
+        self.clear_reports()
+        while remaining_size > 0:
+            current_keys = keys[start:stop]
+            results = [
+                self._process_observation_id(collection, k, observations[k])
+                for k in current_keys]
+            for no_observation, updated, skipped, failed, to_delete in results:
+                if no_observation:
+                    self.write_report(NO_OBSERVATION_REPORT, no_observation)
+                if updated:
+                    self.write_report(UPDATED_REPORT, updated)
+                if failed:
+                    self.write_report(FAILED_REPORT, failed)
+                if skipped:
+                    self.write_report(SKIPPED_REPORT, skipped)
+                if to_delete:
+                    self.write_report(TO_DELETE_REPORT, to_delete)
+            start = start + BATCH_SIZE
+            remaining_size = len(keys) - start
+            if BATCH_SIZE > remaining_size:
+                stop = stop + remaining_size
+            else:
+                stop = stop + BATCH_SIZE
 
     def _update_observation(self, client, collection, observation, observationID, filenames):
         to_delete = {}
@@ -260,7 +278,7 @@ class CAOM2FixPreviewClient(object):
                 junks.append(l)
                 self.logger.debug('not a preview: {}'.format(l))
 
-        with open('files_with_no_recognizable_observationID.txt', 'w') as the_file:
+        with open(JUNK_REPORT, 'w') as the_file:
             for line in junks:
                 the_file.write(line)
         return obs
@@ -344,17 +362,10 @@ def main_app():
     client = CAOM2FixPreviewClient(subject, level, args.resource_id, host=server)
     if args.cmd == 'visit':
         try:
-            (no_observation, updated, skipped, failed, to_delete) = \
-                client.visit(args.plugin.name, obs_file=args.obs_file)
+            client.visit(args.plugin.name, obs_file=args.obs_file)
         finally:
             if args.obs_file is not None:
                 args.obs_file.close()
-
-        client.write_report('files_with_no_associated_observation.txt', no_observation)
-        client.write_report('files_with_observation_updated.txt', updated)
-        client.write_report('files_with_failed_observation_update.txt', failed)
-        client.write_report('files_with_observation_update_skipped.txt', skipped)
-        client.write_report('files_to_be_deleted_for_observation.txt', to_delete)
     else:
         logger.info("command {} not supported".format(args.cmd))
 
