@@ -84,7 +84,7 @@ from caom2repo import CAOM2RepoClient
 from caom2repo import version
 
 CFHT_DELIMITER = '_preview'
-BATCH_SIZE = 2
+BATCH_SIZE = 1000
 JUNK_REPORT = 'files_with_no_recognizable_observationID.txt'
 NO_OBSERVATION_REPORT = 'files_with_no_associated_observation.txt'
 UPDATED_REPORT = 'files_with_observation_updated.txt'
