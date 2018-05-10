@@ -144,6 +144,12 @@ class CAOM2FixPreviewClient(object):
                 applied to visited observations
         :param obs_file: path to file that contains the preview files to be fixed
         """
+        no_observation = {}
+        updated = {}
+        failed = {}
+        skipped = {}
+        to_delete = {}
+
         assert obs_file is not None
         if not os.path.isfile(plugin):
             raise Exception('Cannot find plugin file ' + plugin)
@@ -168,17 +174,34 @@ class CAOM2FixPreviewClient(object):
             results = [
                 self._process_observation_id(collection, k, observations[k])
                 for k in current_keys]
-            for no_observation, updated, skipped, failed, to_delete in results:
-                if no_observation:
-                    self.write_report(NO_OBSERVATION_REPORT, no_observation)
-                if updated:
-                    self.write_report(UPDATED_REPORT, updated)
-                if failed:
-                    self.write_report(FAILED_REPORT, failed)
-                if skipped:
-                    self.write_report(SKIPPED_REPORT, skipped)
-                if to_delete:
-                    self.write_report(TO_DELETE_REPORT, to_delete)
+            for n, u, f, s, d in results:
+                if n:
+                    no_observation.update(n)
+                if u:
+                    updated.update(f)
+                if f:
+                    failed.update(f)
+                if s:
+                    skipped.update(s)
+                if d:
+                    to_delete.update(d)
+
+            if no_observation:
+                self.write_report(NO_OBSERVATION_REPORT, no_observation)
+                no_observation = {}
+            if updated:
+                self.write_report(UPDATED_REPORT, updated)
+                updated = {}
+            if failed:
+                self.write_report(FAILED_REPORT, failed)
+                failed = {}
+            if skipped:
+                self.write_report(SKIPPED_REPORT, skipped)
+                skipped = {}
+            if to_delete:
+                self.write_report(TO_DELETE_REPORT, to_delete)
+                to_delete = {}
+
             start = start + BATCH_SIZE
             remaining_size = len(keys) - start
             if BATCH_SIZE > remaining_size:
