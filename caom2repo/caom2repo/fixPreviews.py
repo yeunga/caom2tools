@@ -177,7 +177,7 @@ class CAOM2FixPreviewClient():
             results = [
                 self._process_observation_id(collection, k, observations[k])
                 for k in current_keys]
-            for n, u, f, s, d in results:
+            for n, u, s, f, d in results:
                 if n:
                     no_observation.update(n)
                 if u:
