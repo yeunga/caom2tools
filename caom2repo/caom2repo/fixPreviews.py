@@ -181,7 +181,7 @@ class CAOM2FixPreviewClient():
                 if n:
                     no_observation.update(n)
                 if u:
-                    updated.update(f)
+                    updated.update(u)
                 if f:
                     failed.update(f)
                 if s:
