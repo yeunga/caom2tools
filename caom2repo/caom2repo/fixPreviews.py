@@ -86,6 +86,7 @@ from caom2repo import version
 
 CFHT_DELIMITER = '_preview_'
 MOST_DELIMITER = '_preview_'
+OMM_DELIMITER = '_prev'
 BATCH_SIZE = 1000
 JUNK_REPORT = 'files_with_no_recognizable_observationID.txt'
 NO_OBSERVATION_REPORT = 'files_with_no_associated_observation.txt'
@@ -132,12 +133,12 @@ class CAOM2FixPreviewClient():
         self.agent = agent
         self.delimiter = delimiter
 
-    def clear_reports(self):
+    def _clear_reports(self):
         for report in REPORTS:
             with open(report, 'w') as the_file:
                 the_file.write("")
 
-    def write_report(self, name, data):
+    def _write_report(self, name, data):
         with open(name, 'a') as the_file:
             for key, values in data.items():
                 for v in values:
@@ -157,7 +158,7 @@ class CAOM2FixPreviewClient():
             raise Exception('Cannot find plugin file ' + plugin)
 
         self._load_plugin_class(plugin)
-        self.clear_reports()
+        self._clear_reports()
 
         # get observation IDs from file, no batching
         observations = self._get_obs_from_file(obs_file, self.delimiter)
@@ -167,6 +168,11 @@ class CAOM2FixPreviewClient():
         stop = BATCH_SIZE
         remaining_size = len(keys) - start
         while remaining_size > 0:
+            no_observation = {}
+            updated = {}
+            skipped = {}
+            failed = {}
+            to_delete = {}
             current_keys = keys[start:stop]
             results = [
                 self._process_observation_id(collection, k, observations[k])
@@ -184,19 +190,19 @@ class CAOM2FixPreviewClient():
                     to_delete.update(d)
 
             if no_observation:
-                self.write_report(NO_OBSERVATION_REPORT, no_observation)
+                self._write_report(NO_OBSERVATION_REPORT, no_observation)
                 no_observation = {}
             if updated:
-                self.write_report(UPDATED_REPORT, updated)
+                self._write_report(UPDATED_REPORT, updated)
                 updated = {}
             if failed:
-                self.write_report(FAILED_REPORT, failed)
+                self._write_report(FAILED_REPORT, failed)
                 failed = {}
             if skipped:
-                self.write_report(SKIPPED_REPORT, skipped)
+                self._write_report(SKIPPED_REPORT, skipped)
                 skipped = {}
             if to_delete:
-                self.write_report(TO_DELETE_REPORT, to_delete)
+                self._write_report(TO_DELETE_REPORT, to_delete)
                 to_delete = {}
 
             start = start + BATCH_SIZE
@@ -239,7 +245,6 @@ class CAOM2FixPreviewClient():
         return updated, skipped, failed, to_delete
 
     def _process_observation_id(self, collection, observationID, filenames):
-        observation = None
         no_observation = {}
         updated = {}
         skipped = {}
@@ -350,17 +355,20 @@ class CFHTClient(CAOM2FixPreviewClient):
 
         return no_observation, updated, skipped, failed, to_delete
 
-class MOSTClient(CAOM2FixPreviewClient):
+
+class DEFAULTClient(CAOM2FixPreviewClient):
     """Class to do CRUD + visitor actions on a CAOM2 collection repo."""
 
-    def __init__(self, subject, logLevel=logging.INFO,
-                 resource_id=DEFAULT_RESOURCE_ID, host=None):
+    def __init__(self, subject, agent, delimiter, logLevel=logging.INFO,
+                     resource_id=DEFAULT_RESOURCE_ID, host=None):
         """
         Instance of a Client
         :param subject: the subject performing the action
         :type cadcutils.auth.Subject
+        :param agent: name of the agent
+        :param delimiter: the preview delimiter which delimits observationID
         """
-        super(MOSTClient, self).__init__(subject, 'most_fixPreviews', MOST_DELIMITER)
+        super(DEFAULTClient, self).__init__(subject, agent, delimiter)
 
     def handle_get_observation_exception(self, client, observationID, filenames):
         no_observation = {}
@@ -370,6 +378,7 @@ class MOSTClient(CAOM2FixPreviewClient):
         to_delete = {}
         no_observation[observationID] = filenames
         return no_observation, updated, skipped, failed, to_delete
+
 
 def main_app():
     parser = util.get_base_parser(version=version.version,
@@ -431,7 +440,11 @@ def main_app():
             if collection == 'CFHT':
                 client = CFHTClient(subject, level, args.resource_id, host=server)
             elif collection == 'MOST':
-                client = MOSTClient(subject, level, args.resource_id, host=server)
+                client = DEFAULTClient(subject, "most_fixPreviews", MOST_DELIMITER,
+                                       level, args.resource_id, host=server)
+            elif collection == 'OMM':
+                client = DEFAULTClient(subject, "omm_fixPreviews", OMM_DELIMITER,
+                                       level, args.resource_id, host=server)
             else:
                 raise Exception('{} is not a supported collection.'.format(collection))
 

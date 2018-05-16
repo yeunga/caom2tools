@@ -91,212 +91,64 @@ class ObservationUpdater(object):
         else:
             data_client = CadcDataClient(net.Subject())
 
-        pu = PreviewUpdater(observation, data_client)
-        return pu.update()
-
-
-class PreviewUpdater(object):
-
-    def __init__(self, observation, data_client):
-        assert isinstance(observation, Observation), (
-            "observation %s is not an Observation".format(observation))
-        self.observation = observation
-        self.data_client = data_client
-        self.archive = self._get_archive()
-        assert self.archive, 'Could not determine the associated archive'
-
-    def update(self):
         update = False
         to_delete = {}
-        for plane in self.observation.planes.values():
-            updated, to_delete = self.update_plane(plane)
+        for plane in observation.planes.values():
+            updated, to_delete = self._update_previews(plane, observation, data_client)
             update = update or updated
 
         return update, to_delete
 
-    def _get_archive(self):
-        # returns the associated archive according to the archive used in
-        # artifacts
-        archive1 = None
-        for p in self.observation.planes.values():
-            for a in p.artifacts.values():
-                archive2 = urlparse(a.uri).path.split('/')[0]
-                if archive1 and (archive1 != archive2):
-                    raise RuntimeError(('Observation refers to artifact '
-                                        'in multiple archives: {}, {}').format(
-                        archive1, archive2))
-                else:
-                    archive1 = archive2
-        return archive1
-
-    def _get_meta(self, file):
-        meta = None
-        try:
-            meta = self.data_client.get_file_info(self.archive, file)
-        except Exception as e:
-            logging.error('file {}/{} not in ad'.format(
-                self.archive, file))
-            logging.debug(e)
-        return meta
-
-    def _update_artifact(self, plane, file, meta, product_type, release_type):
-        checksum = ChecksumURI('md5:{}'.format(meta['md5sum']))
-        preview_artifact = Artifact('ad:{}/{}'.format(self.archive, file),
-                                    product_type,
-                                    release_type)
-        preview_artifact.content_checksum = checksum
-        preview_artifact.content_length = int(meta['size'])
-        preview_artifact.content_type = str(meta['type'])
-        plane.artifacts[preview_artifact.uri] = preview_artifact
-
-    def update_cfht_plane(self, plane, root_name):
-        update = True
-        meta = []
+    def _update_previews(self, plane, observation, data_client):
         to_delete = {}
-        png_preview_file = '{}_preview_1024.png'.format(root_name)
-        png_thumb_file = '{}_preview_256.png'.format(root_name)
-        jpg_preview_file = '{}_preview_1024.jpg'.format(root_name)
-        jpg_thumb_file = '{}_preview_256.jpg'.format(root_name)
-        jpg_zoom_file = '{}_preview_zoom_1024.jpg'.format(root_name)
-
-        png_preview_meta = self._get_meta(png_preview_file)
-        png_thumb_meta = self._get_meta(png_thumb_file)
-        jpg_preview_meta = self._get_meta(jpg_preview_file)
-        jpg_thumb_meta = self._get_meta(jpg_thumb_file)
-        jpg_zoom_meta = self._get_meta(jpg_zoom_file)
-
-        if png_preview_meta is not None or png_thumb_meta is not None:
-            # at least one png preview file exists
-            if png_preview_meta is not None:
-                self._update_artifact(plane, png_preview_file, png_preview_meta,
-                                      ProductType.PREVIEW, ReleaseType.DATA)
-            if png_thumb_meta is not None:
-                self._update_artifact(plane, png_thumb_file, png_thumb_meta,
-                                      ProductType.THUMBNAIL, ReleaseType.META)
-            # mark all jpeg preview files to be deleted
-            if jpg_preview_meta is not None:
-                meta.append(jpg_preview_meta['name'])
-            if jpg_thumb_meta is not None:
-                meta.append(jpg_thumb_meta['name'])
-            if jpg_zoom_meta is not None:
-                meta.append(jpg_zoom_meta['name'])
-            if len(meta) > 0:
-                to_delete[root_name] = meta
-        elif jpg_preview_meta is not None or jpg_thumb_meta is not None or jpg_zoom_meta is not None:
-            # no png preview file but at least one jpeg preview file exists
-            if jpg_preview_meta is not None:
-                self._update_artifact(plane, jpg_preview_file, jpg_preview_meta,
-                                      ProductType.PREVIEW, ReleaseType.DATA)
-            if jpg_thumb_meta is not None:
-                self._update_artifact(plane, jpg_thumb_file, jpg_thumb_meta,
-                                      ProductType.THUMBNAIL, ReleaseType.META)
-            if jpg_zoom_meta is not None:
-                self._update_artifact(plane, jpg_zoom_file, jpg_zoom_meta,
-                                      ProductType.PREVIEW, ReleaseType.DATA)
-        else:
-            return False
-
-        return update, to_delete
-
-    def update_most_plane(self, plane, root_name):
-        update = True
-        meta = []
-        to_delete = {}
-        jpg_preview_file = '{}_preview_1024.jpg'.format(root_name)
-        jpg_thumb_file = '{}_preview_256.jpg'.format(root_name)
-
-        jpg_preview_meta = self._get_meta(jpg_preview_file)
-        jpg_thumb_meta = self._get_meta(jpg_thumb_file)
-
-        if jpg_preview_meta is not None or jpg_thumb_meta is not None:
-            if jpg_preview_meta is not None:
-                self._update_artifact(plane, jpg_preview_file, jpg_preview_meta,
-                                      ProductType.PREVIEW, ReleaseType.DATA)
-            if jpg_thumb_meta is not None:
-                self._update_artifact(plane, jpg_thumb_file, jpg_thumb_meta,
-                                      ProductType.THUMBNAIL, ReleaseType.DATA)
-        else:
-            return False
-
-        return update, to_delete
-
-
-    def update_plane(self, plane):
-        update = True
-        to_delete = {}
-        root_name = self._get_root_name(plane)
+        archive = self._get_archive(observation)
+        root_name = self._get_root_name(archive, plane, observation)
         if not root_name:
-            return update, to_delete
+            return True, to_delete
 
-        if self.archive == 'CFHT':
-            return self.update_cfht_plane(plane, root_name)
-
-        if self.archive == 'MOST':
-            return self.update_most_plane(plane, root_name)
-
-        preview_file = '{}_preview_1024.png'.format(root_name)
-        thumb_file = '{}_preview_256.png'.format(root_name)
-
-        # check to see if preview exists
-        thumb_meta = None
-        preview_meta = None
-        try:
-            preview_meta = self.data_client.get_file_info(self.archive,
-                                                          preview_file)
-        except Exception as e:
-            logging.error('Preview file {}/{} not in ad'.format(
-                self.archive, preview_file))
-            logging.debug(e)
-        try:
-            thumb_meta = self.data_client.get_file_info(self.archive,
-                                                        thumb_file)
-        except Exception as e:
-            logging.error('Thumbnail file {}/{} not in ad'.format(
-                self.archive, thumb_file))
-            logging.debug(e)
-
-        if not thumb_meta and not preview_meta:
-            logging.warning('Nothing to update')
-            return False
+        if archive == 'CFHT':
+            updater = CFHTUpdater(
+                observation, data_client, archive, root_name)
+        elif archive == 'MOST':
+            preview_file = '{}_preview_1024.jpg'.format(root_name)
+            thumb_file = '{}_preview_256.jpg'.format(root_name)
+            thumb_release_type = ReleaseType.DATA
+            updater = DEFAULTUpdater(
+                observation, data_client, archive, preview_file,
+                thumb_file, thumb_release_type)
+        elif archive == 'OMM':
+            preview_file = '{}_prev.jpg'.format(root_name)
+            thumb_file = '{}_prev_256.jpg'.format(root_name)
+            thumb_release_type = ReleaseType.DATA
+            updater = DEFAULTUpdater(
+                observation, data_client, archive, preview_file,
+                thumb_file, thumb_release_type)
         else:
-            if preview_meta is not None:
-                checksum = ChecksumURI('md5:{}'.format(preview_meta['md5sum']))
-                preview_artifact = Artifact('ad:{}/{}'.format(self.archive,
-                                                              preview_file),
-                                            ProductType.PREVIEW,
-                                            ReleaseType.DATA)
-                preview_artifact.content_checksum = checksum
-                preview_artifact.content_length = int(preview_meta['size'])
-                preview_artifact.content_type = str(preview_meta['type'])
-                plane.artifacts[preview_artifact.uri] = preview_artifact
-            if thumb_meta is not None:
-                checksum = ChecksumURI('md5:{}'.format(thumb_meta['md5sum']))
-                thumbnail_artifact = Artifact('ad:{}/{}'.format(self.archive,
-                                                                thumb_file),
-                                              ProductType.THUMBNAIL,
-                                              ReleaseType.META)
-                thumbnail_artifact.content_checksum = checksum
-                thumbnail_artifact.content_length = int(thumb_meta['size'])
-                thumbnail_artifact.content_type = str(thumb_meta['type'])
-                plane.artifacts[thumbnail_artifact.uri] = thumbnail_artifact
+            # default
+            preview_file = '{}_preview_1024.png'.format(root_name)
+            thumb_file = '{}_preview_256.png'.format(root_name)
+            thumb_release_type = ReleaseType.META
+            updater = DEFAULTUpdater(
+                observation, data_client, archive, preview_file,
+                thumb_file, thumb_release_type)
 
-        return update, to_delete
+        return updater.update_previews(plane)
 
-    def _get_root_name(self, plane):
+    def _get_root_name(self, archive, plane, observation):
         # By default the root name == observation id
-        root = self.observation.observation_id
-        if self.archive == 'CGPS':
+        root = observation.observation_id
+        if archive == 'CGPS':
             # product IDs of planes with individual previews as opposed to
             # planes that share previews with others
             individual_prev = ['1420MHz', '408MHz', 'CO-line', 'HI-line']
             if plane.product_id in individual_prev:
                 root = plane.product_id.replace('MHz', '').replace('-line', '')
-                root = self.observation.observation_id.replace(
+                root = observation.observation_id.replace(
                     '_', '_{}_'.format(root))
                 root = root.replace('-', '_')
             elif 'QU' in plane.product_id:
                 root = None
-        elif self.archive == 'VGPS':
+        elif archive == 'VGPS':
             preview_type = None
             if plane.product_id == '21cm-LineWithCont':
                 preview_type = '_hi_continuum_vla'
@@ -307,6 +159,146 @@ class PreviewUpdater(object):
             else:
                 raise ValueError('Unknown plane product type: {}'.format(
                     plane.product_type))
-            root = self.observation.observation_id.replace(
+            root = observation.observation_id.replace(
                 '_VLA', preview_type)
         return root
+
+    def _get_archive(self, observation):
+        # returns the associated archive according to the archive used in
+        # artifacts
+        archive1 = None
+        for p in observation.planes.values():
+            for a in p.artifacts.values():
+                archive2 = urlparse(a.uri).path.split('/')[0]
+                if archive1 and (archive1 != archive2):
+                    raise RuntimeError(('Observation refers to artifact '
+                                        'in multiple archives: {}, {}').format(
+                        archive1, archive2))
+                else:
+                    archive1 = archive2
+        return archive1
+
+
+class PreviewUpdater(object):
+
+    def __init__(self, observation, data_client, archive):
+        assert isinstance(observation, Observation), (
+            "observation %s is not an Observation".format(observation))
+        self.observation = observation
+        self.data_client = data_client
+        self.archive = archive
+        assert self.archive, 'Could not determine the associated archive'
+
+    def get_meta(self, meta_file):
+        meta = None
+        try:
+            meta = self.data_client.get_file_info(self.archive, meta_file)
+        except Exception as e:
+            logging.error('file {}/{} not in ad'.format(
+                self.archive, meta_file))
+            logging.debug(e)
+        return meta
+
+    def update_artifact(self, plane, file, meta, product_type, release_type):
+        checksum = ChecksumURI('md5:{}'.format(meta['md5sum']))
+        preview_artifact = Artifact('ad:{}/{}'.format(self.archive, file),
+                                    product_type,
+                                    release_type)
+        preview_artifact.content_checksum = checksum
+        preview_artifact.content_length = int(meta['size'])
+        preview_artifact.content_type = str(meta['type'])
+        plane.artifacts[preview_artifact.uri] = preview_artifact
+
+
+class DEFAULTUpdater(PreviewUpdater):
+
+    def __init__(self, observation, data_client, archive, preview_file,
+                 thumb_file, thumb_release_type):
+        super(DEFAULTUpdater, self).__init__(observation, data_client, archive)
+        self.preview_file = preview_file
+        self.thumb_file = thumb_file
+        self.thumb_release_type = thumb_release_type
+
+    def update_previews(self, plane):
+        to_delete = {}
+
+        preview_meta = super(DEFAULTUpdater, self).get_meta(self.preview_file)
+        thumb_meta = super(DEFAULTUpdater, self).get_meta(self.thumb_file)
+
+        if preview_meta is not None or thumb_meta is not None:
+            if preview_meta is not None:
+                super(DEFAULTUpdater, self).update_artifact(
+                    plane, self.preview_file, preview_meta,
+                    ProductType.PREVIEW, ReleaseType.DATA)
+            if thumb_meta is not None:
+                super(DEFAULTUpdater, self).update_artifact(
+                    plane, self.thumb_file, thumb_meta,
+                    ProductType.THUMBNAIL, self.thumb_release_type)
+        else:
+            logging.warning('Nothing to update')
+            return False
+
+        return True, to_delete
+
+
+class CFHTUpdater(PreviewUpdater):
+
+    def __init__(self, observation, data_client, archive, root_name):
+        super(CFHTUpdater, self).__init__(observation, data_client, archive)
+        self.root_name = root_name
+
+    def update_previews(self, plane):
+        meta = []
+        to_delete = {}
+        png_preview_file = '{}_preview_1024.png'.format(self.root_name)
+        png_thumb_file = '{}_preview_256.png'.format(self.root_name)
+        jpg_preview_file = '{}_preview_1024.jpg'.format(self.root_name)
+        jpg_thumb_file = '{}_preview_256.jpg'.format(self.root_name)
+        jpg_zoom_file = '{}_preview_zoom_1024.jpg'.format(self.root_name)
+
+        png_preview_meta = super(CFHTUpdater, self).get_meta(png_preview_file)
+        png_thumb_meta = super(CFHTUpdater, self).get_meta(png_thumb_file)
+        jpg_preview_meta = super(CFHTUpdater, self).get_meta(jpg_preview_file)
+        jpg_thumb_meta = super(CFHTUpdater, self).get_meta(jpg_thumb_file)
+        jpg_zoom_meta = super(CFHTUpdater, self).get_meta(jpg_zoom_file)
+
+        if png_preview_meta is not None or png_thumb_meta is not None:
+            # at least one png preview file exists
+            if png_preview_meta is not None:
+                super(CFHTUpdater, self).update_artifact(
+                    plane, png_preview_file, png_preview_meta,
+                    ProductType.PREVIEW, ReleaseType.DATA)
+            if png_thumb_meta is not None:
+                super(CFHTUpdater, self).update_artifact(
+                    plane, png_thumb_file, png_thumb_meta,
+                    ProductType.THUMBNAIL, ReleaseType.META)
+            # mark all jpeg preview files to be deleted
+            if jpg_preview_meta is not None:
+                meta.append(jpg_preview_meta['name'] + '\n')
+            if jpg_thumb_meta is not None:
+                meta.append(jpg_thumb_meta['name'] + '\n')
+            if jpg_zoom_meta is not None:
+                meta.append(jpg_zoom_meta['name'] + '\n')
+            if len(meta) > 0:
+                to_delete[self.root_name] = meta
+        elif jpg_preview_meta is not None or jpg_thumb_meta is not None or \
+                        jpg_zoom_meta is not None:
+            # no png preview file but at least one jpeg preview file exists
+            if jpg_preview_meta is not None:
+                super(CFHTUpdater, self).update_artifact(
+                    plane, jpg_preview_file, jpg_preview_meta,
+                    ProductType.PREVIEW, ReleaseType.DATA)
+            if jpg_thumb_meta is not None:
+                super(CFHTUpdater, self).update_artifact(
+                    plane, jpg_thumb_file, jpg_thumb_meta,
+                    ProductType.THUMBNAIL, ReleaseType.META)
+            if jpg_zoom_meta is not None:
+                super(CFHTUpdater, self).update_artifact(
+                    plane, jpg_zoom_file, jpg_zoom_meta,
+                    ProductType.PREVIEW, ReleaseType.DATA)
+        else:
+            logging.warning('Nothing to update')
+            return False
+
+        return True, to_delete
+
