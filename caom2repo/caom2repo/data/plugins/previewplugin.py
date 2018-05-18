@@ -116,7 +116,7 @@ class ObservationUpdater(object):
             updater = DEFAULTUpdater(
                 observation, data_client, archive, preview_file,
                 thumb_file, thumb_release_type)
-        elif archive == 'OMM':
+        elif archive == 'OMM' or archive == 'HSTCA':
             preview_file = '{}_prev.jpg'.format(root_name)
             thumb_file = '{}_prev_256.jpg'.format(root_name)
             thumb_release_type = ReleaseType.DATA

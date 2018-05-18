@@ -376,9 +376,6 @@ class HSTCAClient(DEFAULTClient):
         prefix, the_rest = raw_obs_id.split("_", 1)
         if prefix == "hst":
             obs_id = raw_obs_id
-            field = raw_obs_id[raw_obs_id.rindex('_')+1:]
-            if field.isdigit():
-                obs_id = raw_obs_id[:raw_obs_id.rindex('_')]
 
         return obs_id
 
