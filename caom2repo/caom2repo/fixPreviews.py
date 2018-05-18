@@ -355,6 +355,36 @@ class DEFAULTClient(CAOM2FixPreviewClient):
         super(DEFAULTClient, self).__init__(subject, agent, delimiter)
 
 
+class CFHTClient(DEFAULTClient):
+    """A client to fix the previews for the CFHT/CFHTTERAPIX collections."""
+
+    def __init__(self, subject, agent, delimiter, logLevel=logging.INFO,
+                 resource_id=DEFAULT_RESOURCE_ID, host=None):
+        """
+        Instance of a Client
+        :param subject: the subject performing the action
+        :type cadcutils.auth.Subject
+        :param agent: name of the agent
+        :param delimiter: the preview delimiter which delimits observationID
+        """
+        super(CFHTClient, self).__init__(subject, agent, delimiter,
+                                         logLevel, resource_id, host)
+
+    def extract_obs_id(self, line, delimiter):
+        obs_id = None
+        raw_obs_id, the_rest = line.split(delimiter, 1)
+        obs_id = raw_obs_id
+        try:
+            prefix, the_rest = raw_obs_id.split("_", 1)
+            if prefix == "CFHTLS" or prefix == "WIRDS":
+                # chop of version, e.g T0006
+                obs_id = raw_obs_id[:raw_obs_id.rindex('_')]
+        except:
+            pass
+
+        return obs_id
+
+
 class HSTCAClient(DEFAULTClient):
     """A client to fix the previews for the HST/HSTHLA collection."""
 
@@ -441,7 +471,7 @@ def main_app():
             if prefix == 'CFHT':
                 collections.append('CFHT')
                 collections.append('CFHTTERAPIX')
-                client = DEFAULTClient(subject, "cfht_fixPreviews", CFHT_DELIMITER,
+                client = CFHTClient(subject, "cfht_fixPreviews", CFHT_DELIMITER,
                                        level, args.resource_id, host=server)
             elif prefix == 'MOST':
                 collections.append('MOST')
