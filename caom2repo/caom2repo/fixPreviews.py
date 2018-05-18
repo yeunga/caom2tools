@@ -87,6 +87,7 @@ from caom2repo import version
 CFHT_DELIMITER = '_preview_'
 MOST_DELIMITER = '_preview_'
 OMM_DELIMITER = '_prev'
+HSTCA_DELIMITER = '_prev'
 BATCH_SIZE = 1000
 JUNK_REPORT = 'files_with_no_recognizable_observationID.txt'
 NO_OBSERVATION_REPORT = 'files_with_no_associated_observation.txt'
@@ -108,10 +109,6 @@ APP_NAME = 'fixPreviews'
 @six.add_metaclass(abc.ABCMeta)
 class CAOM2FixPreviewClient():
     """Class to do CRUD + visitor actions on a CAOM2 collection repo."""
-
-    @abc.abstractmethod
-    def handle_get_observation_exception(self, client, observationID, filenames):
-        pass
 
     def __init__(self, subject, agent, delimiter, logLevel=logging.INFO,
                  resource_id=DEFAULT_RESOURCE_ID, host=None):
@@ -144,7 +141,7 @@ class CAOM2FixPreviewClient():
                 for v in values:
                     the_file.write(key + ' ' + v)
 
-    def visit(self, plugin, collection, obs_file):
+    def visit(self, plugin, collections, obs_file):
         """
         Main processing function that iterates through the observations of
         the collection and updates them according to the algorithm
@@ -175,7 +172,7 @@ class CAOM2FixPreviewClient():
             to_delete = {}
             current_keys = keys[start:stop]
             results = [
-                self._process_observation_id(collection, k, observations[k])
+                self._process_observation_id(collections, k, observations[k])
                 for k in current_keys]
             for n, u, s, f, d in results:
                 if n:
@@ -244,7 +241,7 @@ class CAOM2FixPreviewClient():
                 'FAILED {} - Reason: {}'.format(observationID, e))
         return updated, skipped, failed, to_delete
 
-    def _process_observation_id(self, collection, observationID, filenames):
+    def _process_observation_id(self, collections, observationID, filenames):
         no_observation = {}
         updated = {}
         skipped = {}
@@ -254,14 +251,12 @@ class CAOM2FixPreviewClient():
         client = CAOM2RepoClient(self._subject, self.level, self.resource_id,
                                  self.host)
         try:
-            observation = client.get_observation(collection, observationID)
+            collection, observation = self._get_observation(client, collections, observationID)
             updated, skipped, failed, to_delete = self._update_observation(
                 client, collection, observation, observationID, filenames)
         except Exception as e:
             if 'not found' in e._msg:
-                no_observation, updated, skipped, failed, to_delete = \
-                    self.handle_get_observation_exception(
-                        client, observationID, filenames)
+                no_observation[observationID] = filenames
             else:
                 failed[observationID] = filenames
                 self.logger.error(
@@ -269,13 +264,32 @@ class CAOM2FixPreviewClient():
 
         return no_observation, updated, skipped, failed, to_delete
 
+    def _get_observation(self, client, collections, observationID):
+        last_exception = None
+        last_collection = None
+        observation = None
+        for collection in collections:
+            try:
+                last_collection = collection
+                observation = client.get_observation(collection, observationID)
+                break
+            except Exception as e:
+                last_exception = e
+
+        if observation is None:
+            raise last_exception
+        else:
+            return last_collection, observation
+
+
+
     def _get_obs_from_file(self, obs_file, delimiter):
         junks = []
         obs = {}
         for l in obs_file:
             filenames = []
             try:
-                obs_id, theRest = l.split(delimiter, 1)
+                obs_id = self.extract_obs_id(l, delimiter)
                 if obs_id is None or len(obs_id) == 0:
                     junks.append(l)
                     self.logger.debug('not a preview: {}'.format(l))
@@ -295,6 +309,10 @@ class CAOM2FixPreviewClient():
             for line in junks:
                 the_file.write(line)
         return obs
+
+    def extract_obs_id(self, line, delimiter):
+        obs_id, theRest = line.split(delimiter, 1)
+        return obs_id
 
     def _load_plugin_class(self, filepath):
         """
@@ -322,42 +340,8 @@ class CAOM2FixPreviewClient():
                 'Cannot find update method in plugin class ' + filepath)
 
 
-class CFHTClient(CAOM2FixPreviewClient):
-    """Class to do CRUD + visitor actions on a CAOM2 collection repo."""
-
-    def __init__(self, subject, logLevel=logging.INFO,
-                 resource_id=DEFAULT_RESOURCE_ID, host=None):
-        """
-        Instance of a Client
-        :param subject: the subject performing the action
-        :type cadcutils.auth.Subject
-        """
-        super(CFHTClient, self).__init__(subject, 'cfht_fixPreviews', CFHT_DELIMITER)
-
-    def handle_get_observation_exception(self, client, observationID, filenames):
-        no_observation = {}
-        updated = {}
-        skipped = {}
-        failed = {}
-        to_delete = {}
-        try:
-            # retry on CFHTTERAPIX collection
-            observation = client.get_observation('CFHTTERAPIX', observationID)
-            updated, skipped, failed, to_delete = self._update_observation(
-                client, 'CFHTTERAPIX', observation, observationID, filenames)
-        except Exception as e:
-            if 'not found' in e._msg:
-                no_observation[observationID] = filenames
-            else:
-                failed[observationID] = filenames
-                self.logger.error(
-                    'FAILED {} - Reason: {}'.format(observationID, e))
-
-        return no_observation, updated, skipped, failed, to_delete
-
-
 class DEFAULTClient(CAOM2FixPreviewClient):
-    """Class to do CRUD + visitor actions on a CAOM2 collection repo."""
+    """A default client to fix the previews for a collection."""
 
     def __init__(self, subject, agent, delimiter, logLevel=logging.INFO,
                      resource_id=DEFAULT_RESOURCE_ID, host=None):
@@ -370,14 +354,33 @@ class DEFAULTClient(CAOM2FixPreviewClient):
         """
         super(DEFAULTClient, self).__init__(subject, agent, delimiter)
 
-    def handle_get_observation_exception(self, client, observationID, filenames):
-        no_observation = {}
-        updated = {}
-        skipped = {}
-        failed = {}
-        to_delete = {}
-        no_observation[observationID] = filenames
-        return no_observation, updated, skipped, failed, to_delete
+
+class HSTCAClient(DEFAULTClient):
+    """A client to fix the previews for the HST/HSTHLA collection."""
+
+    def __init__(self, subject, agent, delimiter, logLevel=logging.INFO,
+                 resource_id=DEFAULT_RESOURCE_ID, host=None):
+        """
+        Instance of a Client
+        :param subject: the subject performing the action
+        :type cadcutils.auth.Subject
+        :param agent: name of the agent
+        :param delimiter: the preview delimiter which delimits observationID
+        """
+        super(HSTCAClient, self).__init__(subject, agent, delimiter,
+                                          logLevel, resource_id, host)
+
+    def extract_obs_id(self, line, delimiter):
+        obs_id = None
+        raw_obs_id, the_rest = line.split(delimiter, 1)
+        prefix, the_rest = raw_obs_id.split("_", 1)
+        if prefix == "hst":
+            obs_id = raw_obs_id
+            field = raw_obs_id[raw_obs_id.rindex('_')+1:]
+            if field.isdigit():
+                obs_id = raw_obs_id[:raw_obs_id.rindex('_')]
+
+        return obs_id
 
 
 def main_app():
@@ -432,23 +435,34 @@ def main_app():
     logger = logging.getLogger('main_app')
 
     if args.cmd == 'visit':
+        collections = []
         obs_file = args.obs_file
         assert obs_file is not None
-        collection, theRest = obs_file.name.split('_', 1)
-        assert collection is not None
+        prefix, theRest = obs_file.name.split('_', 1)
+        assert prefix is not None
         try:
-            if collection == 'CFHT':
-                client = CFHTClient(subject, level, args.resource_id, host=server)
-            elif collection == 'MOST':
+            if prefix == 'CFHT':
+                collections.append('CFHT')
+                collections.append('CFHTTERAPIX')
+                client = DEFAULTClient(subject, "cfht_fixPreviews", CFHT_DELIMITER,
+                                       level, args.resource_id, host=server)
+            elif prefix == 'MOST':
+                collections.append('MOST')
                 client = DEFAULTClient(subject, "most_fixPreviews", MOST_DELIMITER,
                                        level, args.resource_id, host=server)
-            elif collection == 'OMM':
+            elif prefix == 'OMM':
+                collections.append('OMM')
                 client = DEFAULTClient(subject, "omm_fixPreviews", OMM_DELIMITER,
                                        level, args.resource_id, host=server)
+            elif prefix == 'HSTCA':
+                collections.append('HST')
+                collections.append('HSTHLA')
+                client = HSTCAClient(subject, "hstca_fixPreviews", HSTCA_DELIMITER,
+                                       level, args.resource_id, host=server)
             else:
-                raise Exception('{} is not a supported collection.'.format(collection))
+                raise Exception('{} is not a supported prefix.'.format(prefix))
 
-            client.visit(args.plugin.name, collection, obs_file)
+            client.visit(args.plugin.name, collections, obs_file)
         finally:
             if args.obs_file is not None:
                 args.obs_file.close()
