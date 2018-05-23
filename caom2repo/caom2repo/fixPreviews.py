@@ -227,7 +227,9 @@ class CAOM2FixPreviewClient():
                     'UPDATED {}'.format(observation.observation_id))
                 updated[observation.observation_id] = filenames
         except TypeError as e:
-            if "unexpected keyword argument" in str(e):
+            if "bool" in e.message and "is not iterable" in e.message:
+                skipped[observationID] = filenames
+            elif "unexpected keyword argument" in str(e):
                 raise RuntimeError(
                     "{} - To fix the problem, please add the **kwargs "
                     "argument to the list of arguments for the update"
@@ -377,7 +379,7 @@ class CFHTClient(DEFAULTClient):
         try:
             prefix, the_rest = raw_obs_id.split("_", 1)
             if prefix == "CFHTLS" or prefix == "WIRDS":
-                # chop of version, e.g T0006
+                # chop off version, e.g T0006
                 obs_id = raw_obs_id[:raw_obs_id.rindex('_')]
         except:
             pass
